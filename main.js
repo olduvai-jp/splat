@@ -286,6 +286,49 @@ function translate4(a, x, y, z) {
 	];
 }
 
+function eulerToMatrix(roll, pitch, yaw) {
+  var cosR = Math.cos(roll);
+  var sinR = Math.sin(roll);
+  var cosP = Math.cos(pitch);
+  var sinP = Math.sin(pitch);
+  var cosY = Math.cos(yaw);
+  var sinY = Math.sin(yaw);
+
+  var matrix = [
+    [
+      cosP * cosY,
+      cosY * sinP * sinR - cosR * sinY,
+      cosR * cosY * sinP + sinR * sinY
+    ],
+    [
+      cosP * sinY,
+      cosR * cosY + sinR * sinP * sinY,
+      -cosY * sinR + cosR * sinP * sinY
+    ],
+    [
+      -sinP,
+      cosP * sinR,
+      cosR * cosP
+    ]
+  ];
+
+  return matrix;
+}
+
+function movePoint(point, matrix) {
+	var x = point[0];
+	var y = point[1];
+	var z = point[2];
+
+	var result = [
+		matrix[0][0] * x + matrix[0][1] * y + matrix[0][2] * z,
+		matrix[1][0] * x + matrix[1][1] * y + matrix[1][2] * z,
+		matrix[2][0] * x + matrix[2][1] * y + matrix[2][2] * z
+	];
+
+	return result;
+}
+
 function createWorker(self) {
 	let buffer;
 	let vertexCount = 0;
@@ -698,6 +741,31 @@ let defaultViewMatrix = [
 	0.03, 6.55, 1,
 ];
 let viewMatrix = defaultViewMatrix;
+
+	
+const cameraSpeed = [0.6, 0.6, 0.6];
+let cameraTarget = [-3.0089893469241797, -0.11086489695181866, -3.7527640949141428,];
+let cameraDistance = 5.0;
+let cameraAngle = [0, 0, 0];
+
+function updateMatrix() {
+	const rotation = eulerToMatrix(cameraAngle[0], cameraAngle[1], cameraAngle[2])
+
+	let d = movePoint([0, 0, -cameraDistance], rotation);
+
+	let position = [
+		cameraTarget[0] + d[0],
+		cameraTarget[1] + d[1],
+		cameraTarget[2] + d[2],
+	];
+
+	let camera = {
+		position: position,
+		rotation: rotation
+	}
+
+	viewMatrix = getViewMatrix(camera)
+}
 let activeDownsample = null
 async function main() {
 	let carousel = true;
@@ -923,52 +991,24 @@ async function main() {
 		(e) => {
 			carousel = false;
 			e.preventDefault();
-			const lineHeight = 10;
-			const scale =
-				e.deltaMode == 1
-					? lineHeight
-					: e.deltaMode == 2
-					? innerHeight
-					: 1;
-			let inv = invert4(viewMatrix);
-			if (e.shiftKey) {
-				inv = translate4(
-					inv,
-					(e.deltaX * scale) / innerWidth,
-					(e.deltaY * scale) / innerHeight,
-					0,
-				);
-			} else if (e.ctrlKey || e.metaKey) {
-				// inv = rotate4(inv,  (e.deltaX * scale) / innerWidth,  0, 0, 1);
-				// inv = translate4(inv,  0, (e.deltaY * scale) / innerHeight, 0);
-				let preY = inv[13];
-				inv = translate4(
-					inv,
-					0,
-					0,
-					(-10 * (e.deltaY * scale)) / innerHeight,
-				);
-				inv[13] = preY;
-			} else {
-				let d = 4;
-				inv = translate4(inv, 0, 0, d);
-				inv = rotate4(inv, -(e.deltaX * scale) / innerWidth, 0, 1, 0);
-				inv = rotate4(inv, (e.deltaY * scale) / innerHeight, 1, 0, 0);
-				inv = translate4(inv, 0, 0, -d);
-			}
+			let dy = e.deltaY / innerHeight;
 
-			viewMatrix = invert4(inv);
+			cameraDistance += dy;
+
 		},
 		{ passive: false },
 	);
 
 	let startX, startY, down;
+
+
 	canvas.addEventListener("mousedown", (e) => {
 		carousel = false;
 		e.preventDefault();
 		startX = e.clientX;
 		startY = e.clientY;
-		down = e.ctrlKey || e.metaKey ? 2 : 1;
+		down = e.ctrlKey || e.metaKey ? 2 :
+					 e.button == 0 ? 1 : 3;
 	});
 	canvas.addEventListener("contextmenu", (e) => {
 		carousel = false;
@@ -986,29 +1026,19 @@ async function main() {
 			let dy = (5 * (e.clientY - startY)) / innerHeight;
 			let d = 4;
 
-			inv = translate4(inv, 0, 0, d);
-			inv = rotate4(inv, dx, 0, 1, 0);
-			inv = rotate4(inv, -dy, 1, 0, 0);
-			inv = translate4(inv, 0, 0, -d);
-			// let postAngle = Math.atan2(inv[0], inv[10])
-			// inv = rotate4(inv, postAngle - preAngle, 0, 0, 1)
-			// console.log(postAngle)
-			viewMatrix = invert4(inv);
+			cameraAngle[0] += dy*cameraSpeed[0];
+			cameraAngle[1] -= dx*cameraSpeed[1];
+
+			updateMatrix()
+			
 
 			startX = e.clientX;
 			startY = e.clientY;
 		} else if (down == 2) {
-			let inv = invert4(viewMatrix);
-			// inv = rotateY(inv, );
-			let preY = inv[13];
-			inv = translate4(
-				inv,
-				(-10 * (e.clientX - startX)) / innerWidth,
-				0,
-				(10 * (e.clientY - startY)) / innerHeight,
-			);
-			inv[13] = preY;
-			viewMatrix = invert4(inv);
+
+			startX = e.clientX;
+			startY = e.clientY;
+		} else if (down == 3) {
 
 			startX = e.clientX;
 			startY = e.clientY;
@@ -1021,105 +1051,6 @@ async function main() {
 		startY = 0;
 	});
 
-	let altX = 0,
-		altY = 0;
-	canvas.addEventListener(
-		"touchstart",
-		(e) => {
-			e.preventDefault();
-			if (e.touches.length === 1) {
-				carousel = false;
-				startX = e.touches[0].clientX;
-				startY = e.touches[0].clientY;
-				down = 1;
-			} else if (e.touches.length === 2) {
-				// console.log('beep')
-				carousel = false;
-				startX = e.touches[0].clientX;
-				altX = e.touches[1].clientX;
-				startY = e.touches[0].clientY;
-				altY = e.touches[1].clientY;
-				down = 1;
-			}
-		},
-		{ passive: false },
-	);
-	canvas.addEventListener(
-		"touchmove",
-		(e) => {
-			e.preventDefault();
-			if (e.touches.length === 1 && down) {
-				let inv = invert4(viewMatrix);
-				let dx = (4 * (e.touches[0].clientX - startX)) / innerWidth;
-				let dy = (4 * (e.touches[0].clientY - startY)) / innerHeight;
-
-				let d = 4;
-				inv = translate4(inv, 0, 0, d);
-				// inv = translate4(inv,  -x, -y, -z);
-				// inv = translate4(inv,  x, y, z);
-				inv = rotate4(inv, dx, 0, 1, 0);
-				inv = rotate4(inv, -dy, 1, 0, 0);
-				inv = translate4(inv, 0, 0, -d);
-
-				viewMatrix = invert4(inv);
-
-				startX = e.touches[0].clientX;
-				startY = e.touches[0].clientY;
-			} else if (e.touches.length === 2) {
-				// alert('beep')
-				const dtheta =
-					Math.atan2(startY - altY, startX - altX) -
-					Math.atan2(
-						e.touches[0].clientY - e.touches[1].clientY,
-						e.touches[0].clientX - e.touches[1].clientX,
-					);
-				const dscale =
-					Math.hypot(startX - altX, startY - altY) /
-					Math.hypot(
-						e.touches[0].clientX - e.touches[1].clientX,
-						e.touches[0].clientY - e.touches[1].clientY,
-					);
-				const dx =
-					(e.touches[0].clientX +
-						e.touches[1].clientX -
-						(startX + altX)) /
-					2;
-				const dy =
-					(e.touches[0].clientY +
-						e.touches[1].clientY -
-						(startY + altY)) /
-					2;
-				let inv = invert4(viewMatrix);
-				// inv = translate4(inv,  0, 0, d);
-				inv = rotate4(inv, dtheta, 0, 0, 1);
-
-				inv = translate4(inv, -dx / innerWidth, -dy / innerHeight, 0);
-
-				let preY = inv[13];
-				inv = translate4(inv, 0, 0, 3 * (1 - dscale));
-				inv[13] = preY;
-
-				viewMatrix = invert4(inv);
-
-				startX = e.touches[0].clientX;
-				altX = e.touches[1].clientX;
-				startY = e.touches[0].clientY;
-				altY = e.touches[1].clientY;
-			}
-		},
-		{ passive: false },
-	);
-	canvas.addEventListener(
-		"touchend",
-		(e) => {
-			e.preventDefault();
-			down = false;
-			startX = 0;
-			startY = 0;
-		},
-		{ passive: false },
-	);
-
 	let jumpDelta = 0;
 	let vertexCount = 0;
 
@@ -1130,67 +1061,37 @@ async function main() {
 	const frame = (now) => {
 		let inv = invert4(viewMatrix);
 
-		if (activeKeys.includes("ArrowUp")) {
-			if (activeKeys.includes("Shift")) {
-				inv = translate4(inv, 0, -0.03, 0);
-			} else {
-				let preY = inv[13];
-				inv = translate4(inv, 0, 0, 0.1);
-				inv[13] = preY;
-			}
-		}
-		if (activeKeys.includes("ArrowDown")) {
-			if (activeKeys.includes("Shift")) {
-				inv = translate4(inv, 0, 0.03, 0);
-			} else {
-				let preY = inv[13];
-				inv = translate4(inv, 0, 0, -0.1);
-				inv[13] = preY;
-			}
-		}
-		if (activeKeys.includes("ArrowLeft"))
-			inv = translate4(inv, -0.03, 0, 0);
-		//
-		if (activeKeys.includes("ArrowRight"))
-			inv = translate4(inv, 0.03, 0, 0);
-		// inv = rotate4(inv, 0.01, 0, 1, 0);
-		if (activeKeys.includes("a")) inv = rotate4(inv, -0.01, 0, 1, 0);
-		if (activeKeys.includes("d")) inv = rotate4(inv, 0.01, 0, 1, 0);
-		if (activeKeys.includes("q")) inv = rotate4(inv, 0.01, 0, 0, 1);
-		if (activeKeys.includes("e")) inv = rotate4(inv, -0.01, 0, 0, 1);
-		if (activeKeys.includes("w")) inv = rotate4(inv, 0.005, 1, 0, 0);
-		if (activeKeys.includes("s")) inv = rotate4(inv, -0.005, 1, 0, 0);
+		const rotateMatrix = eulerToMatrix(cameraAngle[0], cameraAngle[1], cameraAngle[2])
+		const unitValue = 0.01 * cameraDistance
 
-		if (["j", "k", "l", "i"].some((k) => activeKeys.includes(k))) {
-			let d = 4;
-			inv = translate4(inv, 0, 0, d);
-			inv = rotate4(
-				inv,
-				activeKeys.includes("j")
-					? -0.05
-					: activeKeys.includes("l")
-					? 0.05
-					: 0,
-				0,
-				1,
-				0,
-			);
-			inv = rotate4(
-				inv,
-				activeKeys.includes("i")
-					? 0.05
-					: activeKeys.includes("k")
-					? -0.05
-					: 0,
-				1,
-				0,
-				0,
-			);
-			inv = translate4(inv, 0, 0, -d);
+		if (activeKeys.includes("q")) cameraTarget[1] += unitValue;
+		if (activeKeys.includes("e")) cameraTarget[1] -= unitValue;
+		if (activeKeys.includes("a")) {
+			const rotated = movePoint([-unitValue, 0, 0], rotateMatrix)
+			cameraTarget[0] += rotated[0];
+			//cameraTarget[1] += rotated[1];
+			cameraTarget[2] += rotated[2];
+		}
+		if (activeKeys.includes("d")) {
+			const rotated = movePoint([unitValue, 0, 0], rotateMatrix)
+			cameraTarget[0] += rotated[0];
+			//cameraTarget[1] += rotated[1];
+			cameraTarget[2] += rotated[2];
+		}
+		if (activeKeys.includes("w")) {
+			const rotated = movePoint([0, 0, unitValue], rotateMatrix)
+			cameraTarget[0] += rotated[0];
+			//cameraTarget[1] += rotated[1];
+			cameraTarget[2] += rotated[2];
+		}
+		if (activeKeys.includes("s")) {
+			const rotated = movePoint([0, 0, -unitValue], rotateMatrix)
+			cameraTarget[0] += rotated[0];
+			//cameraTarget[1] += rotated[1];
+			cameraTarget[2] += rotated[2];
 		}
 
-		// inv[13] = preY;
-		viewMatrix = invert4(inv);
+		updateMatrix();
 
 		if (carousel) {
 			let inv = invert4(defaultViewMatrix);
